@@ -2,7 +2,7 @@ package sample.service;
 
 import org.mindrot.jbcrypt.BCrypt;
 import sample.domain.User;
-import sample.proto.UserRepo;
+import sample.persistence.UserRepo;
 
 public class UserService {
 

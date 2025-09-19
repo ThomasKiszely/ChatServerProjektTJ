@@ -1,4 +1,4 @@
-package sample.proto;
+package sample.persistence;
 
 import org.mindrot.jbcrypt.BCrypt;
 import sample.Config.DatabaseConfig;
