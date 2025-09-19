@@ -2,6 +2,7 @@ package sample.net;
 
 import com.google.gson.Gson;
 import sample.domain.*;
+import sample.proto.EmojiParser;
 import sample.proto.JsonMessageParser;
 import sample.proto.MessageDTO;
 import sample.proto.ParseException;
@@ -33,7 +34,7 @@ public class ChatClienthandler implements Runnable{
     public void run() {
         try (BufferedReader in = new BufferedReader(new InputStreamReader(socket.getInputStream(), StandardCharsets.UTF_8));
         ) {
-         out = new PrintWriter(socket.getOutputStream(), true);
+            out = new PrintWriter(socket.getOutputStream(), true);
             String userName = in.readLine();
             String password = in.readLine();
             user = userService.login(userName, password);
@@ -70,9 +71,9 @@ public class ChatClienthandler implements Runnable{
                     }
                 }
 
-                }
-            } catch(IOException e){
-                System.out.println("Fejl i forbindelsen: " + e.getMessage());
+            }
+        } catch(IOException e){
+            System.out.println("Fejl i forbindelsen: " + e.getMessage());
         } catch (ParseException e) {
             throw new RuntimeException(e);
         }
@@ -104,59 +105,24 @@ public class ChatClienthandler implements Runnable{
     }
     private void handleMessage (Message message){
         switch (message.chatType()) {
-            case TEXT -> broadcast(user.getUsername() + " | " + message.formattedTimestamp() + " | " + message.chatType() + " | " + message.payload(), getClientsByRoom(user.getChatRoom()));
-            case EMOJI ->
-                    broadcast(user.getUsername() + " sender emoji: " + message.payload(), getClientsByRoom(user.getChatRoom()));
+            case TEXT ->
+                    broadcast(user.getUsername() + " | " + message.formattedTimestamp() + " | " + message.chatType() + " | " + message.payload(), getClientsByRoom(user.getChatRoom()));
+            case EMOJI -> {
+                String emoji = EmojiParser.parseEmoji(message.payload());
+                broadcast(user.getUsername() + " | " + message.formattedTimestamp() + " | " + message.chatType() + " | " + emoji, getClientsByRoom(user.getChatRoom()));
+            }
+
             case FILE_OFFER -> {
                 String[] parts = message.payload().split("\\|");
                 if (parts.length != 5) {
                     out.println("Ugyldig metadata for filoverførsel");
                     return;
                 }
-                String sender = parts[0];
-                String timestamp = parts[1];
-                String filename = parts[3];
-                long fileSize = Long.parseLong(parts[4]);
-                String recipient = message.recipient();
-
-                pendingFiles.put(recipient, new FileOffer(sender, recipient, filename, fileSize));
-                unicast(sender + " vil sende dig filen '" + filename + "' (Størrelse: " + fileSize + " bytes. Svar /FILE_ACCEPT eller /FILE_REJECT.", recipient);
+                offerFile(message, parts);
             }
             case FILE_ACCEPT -> {
-                FileOffer offer = pendingFiles.remove(user.getUsername());
-                if (offer == null) {
-                    out.println("Ingen ventende filer");
-                    return;
-                }
-                // 1) Bekræft accept til afsender
-                unicast(
-                        "Bruger " + user.getUsername() + " har accepteret din fil: " + offer.fileName,
-                        offer.sender
-                );
-
-                // 2) Find en ledig port
-                int filePort;
-                try {
-                    filePort = findFreePort();
-                } catch (IOException e) {
-                    out.println("Kunne ikke allokere port til filtransfer");
-                    return;
-                }
-
-                // 3) Send portnummer som JSON via MessageDTO
-                MessageDTO portMsg = new MessageDTO(
-                        "server",
-                        ChatType.FILE_PORT,
-                        String.valueOf(filePort),
-                        null,
-                        offer.sender
-                );
-                out.println(new Gson().toJson(portMsg));
-
-                // 4) Start file-server i en ny tråd
-                new Thread(() -> startFileServer(filePort, offer)).start();
+                acceptFile();
             }
-
             case FILE_REJECT -> {
                 FileOffer offer = pendingFiles.remove(user.getUsername());
                 if (offer != null) {
@@ -173,46 +139,117 @@ public class ChatClienthandler implements Runnable{
                 }
             }
             case JOIN_ROOM -> {
-                removeClientFromRoom();
-                try {
-                    ChatRoom chatRoom = ChatRoom.valueOf(message.payload().trim().toUpperCase());
-                    user.setChatRoom(chatRoom);
-                    getClientsByRoom(chatRoom).add(out);
-                    broadcast("Bruger " + user.getUsername() + " har skiftet til chatrummet " + chatRoom, getClientsByRoom(chatRoom));
-                    out.println("Du er nu i rummet: " + chatRoom);
-                } catch (IllegalArgumentException e) {
-                    out.println("Ugyldigt chatrum: " + message.payload());
-                    getClientsByRoom(user.getChatRoom()).add(out);
-                }
+                joinRoom(message);
             }
         }
     }
 
-    private void handleFiletransfer(FileOffer offer) {
-        File outputFile = new File("received_files/" +  offer.fileName);
-        outputFile.getParentFile().mkdirs();
-        out.println("Filoverførsel starter");
-        try (
-                BufferedInputStream inputStream = new BufferedInputStream(socket.getInputStream());
-                FileOutputStream outputStream = new FileOutputStream(outputFile)
-        ){
-            byte[] buffer = new byte[1024];
-            long bytesReadTotal = 0;
-            while (bytesReadTotal < offer.fileSize) {
-                int bytesToRead = (int) Math.min(buffer.length, offer.fileSize - bytesReadTotal);
-                int bytesRead = inputStream.read(buffer, 0, bytesToRead);
-                if (bytesRead == -1) {
-                    break;
-                }
-                outputStream.write(buffer, 0, bytesRead);
-                bytesReadTotal += bytesRead;
-            }
-            out.println("Fil '" + offer.fileName + "' modtaget fra " + offer.sender);
-        }
-        catch (IOException e) {
-            out.println("Fejl under overførsel af filen '" + offer.fileName + "': " + e.getMessage());
+    private void joinRoom(Message message) {
+        removeClientFromRoom();
+        try {
+            ChatRoom chatRoom = ChatRoom.valueOf(message.payload().trim().toUpperCase());
+            user.setChatRoom(chatRoom);
+            getClientsByRoom(chatRoom).add(out);
+            broadcast("Bruger " + user.getUsername() + " har skiftet til chatrummet " + chatRoom, getClientsByRoom(chatRoom));
+            out.println("Du er nu i rummet: " + chatRoom);
+        } catch (IllegalArgumentException e) {
+            out.println("Ugyldigt chatrum: " + message.payload());
+            getClientsByRoom(user.getChatRoom()).add(out);
         }
     }
+
+    private void acceptFile() {
+        FileOffer offer = pendingFiles.remove(user.getUsername());
+        if (offer == null) {
+            out.println("Ingen ventende filer");
+            return;
+        }
+
+        int filePort;
+        try (ServerSocket tmp = new ServerSocket(0)) {
+            filePort = tmp.getLocalPort();
+        } catch (IOException e) {
+            out.println("Kunne ikke allokere port til filtransfer");
+            e.printStackTrace();
+            return;
+        }
+
+        // Nu er filePort garanteret initialiseret
+        MessageDTO toSender = getDtoToSender(filePort, offer);
+        MessageDTO toReceiver = getDtoToReceiver(filePort, offer);
+        unicast(new Gson().toJson(toSender), offer.sender);
+        unicast(new Gson().toJson(toReceiver), offer.recipient);
+
+        new Thread(() -> {
+            try (ServerSocket srv = new ServerSocket(filePort)) {
+                // Upload fra afsender
+                try (
+                        Socket uploadSock = srv.accept();
+                        BufferedInputStream bis = new BufferedInputStream(uploadSock.getInputStream());
+                        FileOutputStream fos = new FileOutputStream("server_files/" + offer.fileName)
+                ) {
+                    byte[] buf = new byte[4096];
+                    long total = 0;
+                    int r;
+                    while ((r = bis.read(buf)) != -1 && total < offer.fileSize) {
+                        fos.write(buf, 0, r);
+                        total += r;
+                    }
+                }
+
+                // Download til modtager
+                try (
+                        Socket downloadSock = srv.accept();
+                        BufferedOutputStream bos = new BufferedOutputStream(downloadSock.getOutputStream());
+                        FileInputStream fis = new FileInputStream("server_files/" + offer.fileName)
+                ) {
+                    byte[] buf = new byte[4096];
+                    int r;
+                    while ((r = fis.read(buf)) != -1) {
+                        bos.write(buf, 0, r);
+                    }
+                    bos.flush();
+                }
+
+            } catch (IOException e) {
+                e.printStackTrace();
+            }
+        }).start();
+    }
+
+    private MessageDTO getDtoToReceiver(int filePort, FileOffer offer) {
+        MessageDTO toReceiver = new MessageDTO(
+                "server",
+                ChatType.FILE_PORT,
+                filePort + "|DOWNLOAD|" + offer.fileName + "|" + offer.fileSize,
+                null,
+                offer.recipient
+        );
+        return toReceiver;
+    }
+
+    private MessageDTO getDtoToSender(int filePort, FileOffer offer) {
+        MessageDTO toSender = new MessageDTO(
+                "server",
+                ChatType.FILE_PORT,
+                filePort + "|UPLOAD",
+                null,
+                offer.sender
+        );
+        return toSender;
+    }
+
+    private void offerFile(Message message, String[] parts) {
+        String sender = parts[0];
+        String timestamp = parts[1];
+        String filename = parts[3];
+        long fileSize = Long.parseLong(parts[4]);
+        String recipient = message.recipient();
+
+        pendingFiles.put(recipient, new FileOffer(sender, recipient, filename, fileSize));
+        unicast(sender + " vil sende dig filen '" + filename + "' (Størrelse: " + fileSize + " bytes. Svar /FILE_ACCEPT eller /FILE_REJECT.", recipient);
+    }
+
     private void removeClientFromRoom(){
         if (user == null || out == null) {
             return;
@@ -222,34 +259,6 @@ public class ChatClienthandler implements Runnable{
             clients.remove(out);
         }
         broadcast("User " + user.getUsername() + " har forladt rummet", clients);
-    }
-    /** Åbner en midlertidig ServerSocket på port 0, returnerer den tildelte port */
-    private int findFreePort() throws IOException {
-        try (ServerSocket ss = new ServerSocket(0)) {
-            return ss.getLocalPort();
-        }
-    }
-
-    /** Accepterer én forbindelse og skriver filen til disk */
-    private void startFileServer(int port, FileOffer offer) {
-        try (
-                ServerSocket server = new ServerSocket(port);
-                Socket fsocket = server.accept();
-                BufferedInputStream bis = new BufferedInputStream(fsocket.getInputStream());
-                FileOutputStream fos = new FileOutputStream("received_files/" + offer.fileName)
-        ) {
-            byte[] buf = new byte[4096];
-            long total = 0;
-            int r;
-            while ((r = bis.read(buf)) != -1 && total < offer.fileSize) {
-                fos.write(buf, 0, r);
-                total += r;
-            }
-            fos.flush();
-            unicast("Fil modtaget: " + offer.fileName, offer.sender);
-        } catch (IOException e) {
-            unicast("Fejl under modtagelse af fil '" + offer.fileName + "': " + e.getMessage(), offer.sender);
-        }
     }
 
 }

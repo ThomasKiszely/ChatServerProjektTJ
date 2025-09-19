@@ -15,7 +15,7 @@ public class ChatServer {
     public static final List<PrintWriter> gameClients = Collections.synchronizedList(new ArrayList<>());
     public static final List<PrintWriter> chattingClients = Collections.synchronizedList(new ArrayList<>());
     public static final List<PrintWriter> musicClients = Collections.synchronizedList(new ArrayList<>());
-    public static final Map<User, PrintWriter> userMap = Collections.synchronizedMap(new HashMap<User, PrintWriter>());
+    public static final Map<User, PrintWriter> userMap = Collections.synchronizedMap(new HashMap<>());
 
     public static void main(String[] args){
         BlockingQueue<Runnable> queue = new ArrayBlockingQueue<>(100);
