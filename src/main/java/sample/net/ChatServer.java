@@ -1,5 +1,6 @@
 package sample.net;
 
+import sample.domain.FileOffer;
 import sample.domain.User;
 
 import java.net.*;
@@ -17,7 +18,13 @@ public class ChatServer {
     public static final List<PrintWriter> musicClients = Collections.synchronizedList(new ArrayList<>());
     public static final Map<User, PrintWriter> userMap = Collections.synchronizedMap(new HashMap<>());
 
-    public static void main(String[] args){
+    private final Map<String, FileOffer> pendingFiles = Collections.synchronizedMap(new HashMap<>());
+
+    public Map<String, FileOffer> getPendingFiles() {
+        return pendingFiles;
+    }
+
+    public void start() {
         BlockingQueue<Runnable> queue = new ArrayBlockingQueue<>(100);
         ThreadPoolExecutor pool = new ThreadPoolExecutor(5, 5, 0, TimeUnit.SECONDS, queue);
 
@@ -26,8 +33,8 @@ public class ChatServer {
 
             while(true){
                 try {
-                Socket clientSocket = serverSocket.accept();
-                pool.submit(new ChatClienthandler(clientSocket));
+                    Socket clientSocket = serverSocket.accept();
+                    pool.submit(new ChatClienthandler(clientSocket, this.getPendingFiles()));
 
                 } catch (IOException e) {
                     System.out.println("Fejl med klientforbindelsen" + e.getMessage());
@@ -38,5 +45,11 @@ public class ChatServer {
             System.out.println("Fejl på serveren");
         }
 
+    }
+
+
+    public static void main(String[] args) {
+        ChatServer chatServer = new ChatServer();
+        chatServer.start();
     }
 }

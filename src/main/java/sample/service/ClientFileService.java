@@ -5,8 +5,9 @@ import sample.proto.MessageDTO;
 import java.io.*;
 import java.net.Socket;
 
-public class FileService {
+public class ClientFileService {
     private Socket socket;
+
     public void fileTransfer(MessageDTO msg, String pendingFileName, long pendingFileSize, String host) {
         String[] parts = msg.payload().split("\\|");
         int    filePort = Integer.parseInt(parts[0]);
@@ -79,9 +80,9 @@ public class FileService {
         }
     }
     private void receiveFileOnSeparateSocket(String savePath,
-                                                    String host,
-                                                    int port,
-                                                    long fileSize) {
+                                             String host,
+                                             int port,
+                                             long fileSize) {
         try {
             Thread.sleep(1000); // 1 sekund forsinkelse
         } catch (InterruptedException ignored) {}
