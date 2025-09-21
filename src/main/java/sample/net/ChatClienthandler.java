@@ -189,5 +189,4 @@ public class ChatClienthandler implements Runnable, MessageSender {
         }
         broadcast("User " + user.getUsername() + " har forladt rummet", clients);
     }
-
 }
