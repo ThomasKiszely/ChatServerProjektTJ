@@ -82,11 +82,6 @@ public class Client {
                             }
                         }
 
-                        // Fjernet: sendFile(...) ved "har accepteret din fil"
-                        // if (serverMessage.contains("har accepteret din fil")) {
-                        //     sendFile("files/" + pendingFileName);
-                        // }
-
                         if (serverMessage.startsWith("Filoverførsel starter")) {
                             fileService.receiveFile("received_files/" + pendingFileName, pendingFileSize);
                         }
